@@ -133,7 +133,7 @@ class PostController extends Controller
 			if ($image->validate())
 			{
 				$fileName = uniqid() . '.' . $image->image->getExtensionName();
-				$filePath = Yii::getPathOfAlias('webroot') . '/upload/' . $fileName;
+				$filePath = Yii::getPathOfAlias('webroot.upload') . DIRECTORY_SEPARATOR . $fileName;
 				$image->image->saveAs($filePath);
 				$image->image = $fileName;
 				$image->save();
@@ -223,7 +223,13 @@ class PostController extends Controller
 	 */
 	public function actionDelete($id)
 	{
-		$this->loadModel($id)->delete();
+        $this->loadModel($id)->delete();
+        $deleteFiles = PostImage::model()->findAll('post_id = :postID', array(':postID' => $id));
+        foreach($deleteFiles as $curFile)
+        {
+            unlink(Yii::getPathOfAlias('webroot.upload') . DIRECTORY_SEPARATOR . $curFile->image);
+        }
+        PostImage::model()->deleteAll('post_id = :postID', array(':postID' => $id));
 
 		// if AJAX request (triggered by deletion via admin grid view), we should not redirect the browser
 
