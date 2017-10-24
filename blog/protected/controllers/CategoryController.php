@@ -1,10 +1,6 @@
 <?php
-class PostController extends Controller
+class CategoryController extends Controller
 {
-	/**
-	 * @var string the default layout for the views. Defaults to '//layouts/column2', meaning
-	 * using two-column layout. See 'protected/views/layouts/column2.php'.
-	 */
 	public $layout = '//layouts/column2';
 
 	/**
@@ -18,20 +14,16 @@ class PostController extends Controller
 		);
 	}
 
-	/**
-	 * Specifies the access control rules.
-	 * This method is used by the 'accessControl' filter.
-	 * @return array access control rules
-	 */
-	public function accessRules()
+	public
+
+	function accessRules()
 	{
 		return array(
 			array(
 				'allow', // allow all users to perform 'index' and 'view' actions
 				'actions' => array(
 					'index',
-					'view',
-					'ajax'
+					'view'
 				) ,
 				'users' => array(
 					'*'
@@ -67,53 +59,45 @@ class PostController extends Controller
 		);
 	}
 
-	/**
-	 * Displays a particular model.
-	 * @param integer $id the ID of the model to be displayed
-	 */
 	public function actionView($id)
-	{      
-        $modelComment = new Comment;
-
-		$this->performAjaxValidation($modelComment);
-
-		if(!Yii::app()->user->isGuest && isset($_POST['Comment']))
-		{
-			$modelComment->attributes=$_POST['Comment'];
-            $modelComment->post_id = $id;
-            $modelComment->user_id = Yii::app()->user->getId();
-            $modelComment->date_created = date('Y-m-d');
-            $modelComment->status = 'true';     
-			$modelComment->save();
-		}
+	{
+        $ids = null;
+        $subcategories = null;
+        $model = $this->loadModel($id);
+        $ids .= $model->id . ',';
         
-        
-		$criteria = new CDbCriteria;
-        $criteria->select = array('c.content', 'c.date_created');
-        $criteria->alias = 'c';
-        $criteria->join = 'LEFT JOIN users u ON c.user_id = u.id';
-		$criteria->condition = 'post_id = :post_id';
+        $descendants = $model->descendants()->findAll();
+		foreach($descendants as $category)
+        {
+            $ids .= $category->id . ',';
+            $subcategories .= $category->title . ', ';
+        }
+    
+	    $criteria = new CDbCriteria;
+		$criteria->select = array('c.id', 'p.id', 'p.title', 'c.title as category_title', 'p.pub_date', 'c.status');
+		$criteria->alias = 'p';
+		$criteria->join = 'LEFT JOIN categories c ON  c.id = p.category_id';
+		$criteria->condition = 'p.category_id IN('.trim($ids, ',').') AND p.status = "true" AND c.status = "true" AND p.pub_date <= :currentDate';
 		$criteria->params = array(
-			':post_id' => $id
+			':currentDate' => date('Y-m-d')
 		);
-        $criteria->with = array('users'=>array('select'=>array('username')));
-        $criteria->order = 'c.date_created, c.id DESC';
-		      
-        $dataProvider=new CActiveDataProvider('Comment', array(
+		$criteria->with = array(
+	      'categories'
+		);
         
-            'criteria' => $criteria
+		$criteria->order = 'p.pub_date DESC';
         
-        )); 
-        
-       $viewImages = PostImage::model()->findAll('post_id=:postID', array(':postID'=>$id));
-       $contentId = CHtml::activeId($modelComment,'content');       
-        
-        $this->render('view', array(
-			'model' => $this->loadModel($id) ,
-            'viewImages' => $viewImages,
-            'dataProvider'=>$dataProvider,
-            'modelComment' => $modelComment,
-            'contentId' => $contentId 
+		$dataProvider = new CActiveDataProvider('Post', array(
+			'criteria' => $criteria
+		));
+
+		$this->render('/post/index', array(
+            'model' => $model,
+            'subcategories' => $subcategories,
+			'dataProvider' => $dataProvider,
+			'pagination' => array(
+				'pageSize' => 10,
+			) ,
 		));
 	}
 
@@ -123,118 +107,152 @@ class PostController extends Controller
 	 */
 	public function actionCreate()
 	{
-		$model = new Post;
-		$image = new PostImage;
-		$this->performAjaxValidation($model);
-		if (isset($_POST['PostImage']))
+		$model = new Category;
+		if (isset($_POST['Category']))
 		{
-			$image->image = CUploadedFile::getInstance($image, 'image');
-			$image->post_id = 0;
-			if ($image->validate())
+			$model->attributes = $_POST['Category'];
+			if ($model->validate())
 			{
-				$fileName = uniqid() . '.' . $image->image->getExtensionName();
-				$filePath = Yii::getPathOfAlias('webroot.upload') . DIRECTORY_SEPARATOR . $fileName;
-				$image->image->saveAs($filePath);
-				$image->image = $fileName;
-				$image->save();
-				$files = [];
-				if (Yii::app()->session['addImages'])
+				$model->status = 'true';
+				if (!empty($_POST['Category']['root']))
 				{
-					$arrayOfFiles = json_decode(Yii::app()->session['addImages']);
+					$parentCategory = $this->loadModel($_POST['Category']['root']);
+					$model->appendTo($parentCategory);
 				}
-
-				$arrayOfFiles[] = ['id' => $image->id, 'image' => $image->image];
-				$jsonFiles = json_encode($arrayOfFiles);
-				Yii::app()->session['addImages'] = $jsonFiles;
-			}
-		}
-
-		if (Yii::app()->session['addImages'])
-		{
-			$jsonFiles = json_decode(Yii::app()->session['addImages']);
-		}
-
-		if (isset($_POST['Post']))
-		{
-			$model->attributes = $_POST['Post'];
-			$model->status = 'true';
-			if ($model->save())
-			{
-				if (isset($jsonFiles))
+				else
 				{
-					$ids = null;
-					foreach($jsonFiles as $currentFile) $ids.= $currentFile->id . ',';
-					PostImage::model()->updateAll(array(
-						'post_id' => $model->id
-					) , 'id IN (' . trim($ids, ',') . ')');
-					Yii::app()->session->remove('addImages');
+					$model->saveNode();
 				}
 
 				$this->redirect(array(
-					'view',
-					'id' => $model->id
+					'category/admin'
 				));
 			}
 		}
 
-        $categories = $this->loadCategories();
-		$this->render('create', array(
+		$categories = $this->loadCategories();
+        $this->render('create', array(
 			'model' => $model,
-            'categories' => $categories,
-			'image' => $image,
-			'jsonFiles' => $jsonFiles ?? null
+            'categories' => $categories
 		));
 	}
 
-	/**
-	 * Updates a particular model.
-	 * If update is successful, the browser will be redirected to the 'view' page.
-	 * @param integer $id the ID of the model to be updated
-	 */
 	public function actionUpdate($id)
 	{
 		$model = $this->loadModel($id);
-        $image = new PostImage;
-
-		// Uncomment the following line if AJAX validation is needed
-		// $this->performAjaxValidation($model);
-
-		if (isset($_POST['Post']))
+		$this->performAjaxValidation($model);
+		if (isset($_POST['Category']))
 		{
-			$model->attributes = $_POST['Post'];
-			if ($model->save()) $this->redirect(array(
-				'view',
-				'id' => $model->id
+			$model->attributes = $_POST['Category'];
+			Category::model()->updateByPk($id, array(
+				'title' => $model->title                  
 			));
+            
+            if($model->root != $id)
+            {
+			$new_category = $this->loadModel($_POST['Category']['root']);
+			$model->moveAsFirst($new_category);
+            }
 		}
-
+        
         $categories = $this->loadCategories();
+
 		$this->render('update', array(
 			'model' => $model,
             'categories' => $categories,
-            'image' => $image
+			'upd' => true
 		));
 	}
 
-	/**
-	 * Deletes a particular model.
-	 * If deletion is successful, the browser will be redirected to the 'admin' page.
-	 * @param integer $id the ID of the model to be deleted
-	 */
 	public function actionDelete($id)
 	{
-        $this->loadModel($id)->delete();
-        $deleteFiles = PostImage::model()->findAll('post_id = :postID', array(':postID' => $id));
-        foreach($deleteFiles as $curFile)
+		$this->loadModel($id);
+		$categoryIds = $id . ',';
+		$postIds = null;
+		$imageIds = null;
+        $imageNames = array();
+        
+        
+       $categoryPosts = Post::model()->findAll('category_id = :categoryID', array(
+				':categoryID' => $id
+			));
+			foreach($categoryPosts as $post)
+			{
+				$postIds.= $post->id . ',';
+				$postImages = PostImage::model()->findAll('post_id = :postID', array(
+					':postID' => $post->id
+				));
+				foreach($postImages as $image)
+				{
+					$imageIds.= $image->id . ',';
+                    $imageNames[] = $image->image;
+				}
+			}     
+        
+        
+		$descendants = $this->loadModel($id)->descendants()->findAll();
+        if($descendants)
         {
-            unlink(Yii::getPathOfAlias('webroot.upload') . DIRECTORY_SEPARATOR . $curFile->image);
+		foreach($descendants as $category)
+		{
+			$categoryIds.= $category->id . ',';
+			$categoryPosts = Post::model()->findAll('category_id = :categoryID', array(
+				':categoryID' => $category->id
+			));
+			foreach($categoryPosts as $post)
+			{
+				$postIds.= $post->id . ',';
+				$postImages = PostImage::model()->findAll('post_id = :postID', array(
+					':postID' => $post->id
+				));
+				foreach($postImages as $image)
+				{
+					$imageIds.= $image->id . ',';
+                    $imageNames[] = $image->image;
+                    
+				}
+			}
+		}
         }
-        PostImage::model()->deleteAll('post_id = :postID', array(':postID' => $id));
+        
+       
+		Category::model()->deleteByPk($id, array() , array());
+		if (!empty($categoryIds))
+		{
+			Category::model()->deleteAll('id IN (' . trim($categoryIds, ',') . ')', array());
+		}
+
+		if (!empty($postIds))
+		{
+			Post::model()->deleteAll('id IN (' . trim($postIds, ',') . ')', array());
+		}
+
+		if (!empty($imageIds))
+		{
+			PostImage::model()->deleteAll('id IN (' . trim($imageIds, ',') . ')', array());
+		}
+       
+       foreach($imageNames as $img) 
+          unlink(Yii::getPathOfAlias('webroot.upload') . DIRECTORY_SEPARATOR . $img); 
 
 		// if AJAX request (triggered by deletion via admin grid view), we should not redirect the browser
 
 		if (!isset($_GET['ajax'])) $this->redirect(isset($_POST['returnUrl']) ? $_POST['returnUrl'] : array(
 			'admin'
+		));
+        
+        
+	}
+    
+
+	/**
+	 * Lists all models.
+	 */
+	public function actionIndex()
+	{
+		$dataProvider = new CActiveDataProvider('Category');
+		$this->render('index', array(
+			'dataProvider' => $dataProvider,
 		));
 	}
 
@@ -243,24 +261,17 @@ class PostController extends Controller
 	 */
 	public function actionAdmin()
 	{
-		$model = new Post('search');
+		$model = new Category('search');
 		$model->unsetAttributes(); // clear any default values
-		if (isset($_GET['Post'])) $model->attributes = $_GET['Post'];
+		if (isset($_GET['Category'])) $model->attributes = $_GET['Category'];
 		$this->render('admin', array(
 			'model' => $model,
 		));
 	}
 
-	/**
-	 * Returns the data model based on the primary key given in the GET variable.
-	 * If the data model is not found, an HTTP exception will be raised.
-	 * @param integer $id the ID of the model to be loaded
-	 * @return Post the loaded model
-	 * @throws CHttpException
-	 */
 	public function loadModel($id)
 	{
-		$model = Post::model()->findByPk($id);
+		$model = Category::model()->findByPk($id);
 		if ($model === null) throw new CHttpException(404, 'The requested page does not exist.');
 		return $model;
 	}
@@ -273,13 +284,9 @@ class PostController extends Controller
         return $categories;
     }
 
-	/**
-	 * Performs the AJAX validation.
-	 * @param Post $model the model to be validated
-	 */
 	protected function performAjaxValidation($model)
 	{
-		if (isset($_POST['ajax']) && $_POST['ajax'] === 'comment-form')
+		if (isset($_POST['ajax']) && $_POST['ajax'] === 'category-form')
 		{
 			echo CActiveForm::validate($model);
 			Yii::app()->end();
